@@ -418,7 +418,7 @@ def create_router(impl: Responses) -> APIRouter:
         # The implementation is typed to return an `AsyncIterator` for streaming.
         if isinstance(result, AsyncIterator):
             return StreamingResponse(
-                _preserve_context_for_sse(sse_generator(result)),
+                sse_generator(result),
                 media_type="text/event-stream",
             )
 

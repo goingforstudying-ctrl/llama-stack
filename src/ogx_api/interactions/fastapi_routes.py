@@ -19,7 +19,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from ogx_api.common.errors import ModelNotFoundError
 from ogx_api.router_utils import standard_responses
-from ogx_api.utils import _preserve_context_for_sse, create_sse_event_with_type, sse_stream
+from ogx_api.utils import create_sse_event_with_type, sse_stream
 from ogx_api.version import OGX_API_V1ALPHA
 
 from .api import Interactions
@@ -113,12 +113,10 @@ def create_router(impl: Interactions) -> APIRouter:
             return result
         if isinstance(result, AsyncIterator):
             return StreamingResponse(
-                _preserve_context_for_sse(
-                    sse_stream(
-                        cast(AsyncIterator[Any], result),
-                        _format_google_sse_event,
-                        _format_google_sse_error_event,
-                    )
+                sse_stream(
+                    cast(AsyncIterator[Any], result),
+                    _format_google_sse_event,
+                    _format_google_sse_error_event,
                 ),
                 media_type="text/event-stream",
             )
