@@ -6,9 +6,15 @@
 
 """Unit tests for stream_utils: stream wrapping and best-effort closing."""
 
+from unittest.mock import MagicMock
+
 import pytest
 
-from ogx.providers.utils.inference.stream_utils import close_async_stream, wrap_async_stream
+from ogx.providers.utils.inference.stream_utils import (
+    close_async_stream,
+    wrap_async_stream,
+    wrap_reasoning_chunks,
+)
 
 
 class TrackingAcloseStream:
@@ -111,3 +117,40 @@ class TestCloseAsyncStream:
 
     async def test_missing_close_is_noop(self):
         await close_async_stream(object())
+
+
+def _chunk_with_reasoning(reasoning=None, reasoning_content=None):
+    chunk = MagicMock()
+    chunk.choices = [MagicMock()]
+    chunk.choices[0].delta = MagicMock()
+    chunk.choices[0].delta.reasoning = reasoning
+    chunk.choices[0].delta.reasoning_content = reasoning_content
+    return chunk
+
+
+class TestWrapReasoningChunks:
+    async def test_extracts_reasoning_from_delta(self):
+        chunks = [
+            _chunk_with_reasoning(reasoning="step 1"),
+            _chunk_with_reasoning(reasoning_content="step 2"),
+            _chunk_with_reasoning(),
+        ]
+        stream = TrackingAcloseStream(chunks)
+        items = [item async for item in wrap_reasoning_chunks(stream)]
+        assert [item.reasoning_content for item in items] == ["step 1", "step 2", None]
+        assert stream.closed
+
+    async def test_early_consumer_close_closes_stream(self):
+        stream = TrackingAcloseStream([_chunk_with_reasoning(reasoning="x")] * 3)
+        wrapper = wrap_reasoning_chunks(stream)
+        assert (await wrapper.__anext__()).reasoning_content == "x"
+        await wrapper.aclose()
+        assert stream.closed
+
+    async def test_upstream_error_closes_stream(self):
+        stream = TrackingAcloseStream([_chunk_with_reasoning(reasoning="x")], fail_at=1)
+        wrapper = wrap_reasoning_chunks(stream)
+        await wrapper.__anext__()
+        with pytest.raises(RuntimeError, match="upstream failed"):
+            await wrapper.__anext__()
+        assert stream.closed

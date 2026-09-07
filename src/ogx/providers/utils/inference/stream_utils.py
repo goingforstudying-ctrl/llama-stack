@@ -10,6 +10,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from ogx.log import get_logger
+from ogx_api import OpenAIChatCompletionChunk, OpenAIChatCompletionChunkWithReasoning
 
 log = get_logger(name=__name__, category="providers::utils")
 
@@ -42,5 +43,27 @@ async def wrap_async_stream[T](stream: AsyncIterator[T]) -> AsyncIterator[T]:
     except Exception as e:
         log.error(f"Error in wrapped async stream: {e}")
         raise
+    finally:
+        await close_async_stream(stream)
+
+
+async def wrap_reasoning_chunks(
+    stream: AsyncIterator[OpenAIChatCompletionChunk],
+) -> AsyncIterator[OpenAIChatCompletionChunkWithReasoning]:
+    """Extract reasoning content from OpenAI chat chunks and close the stream.
+
+    Shared by the vllm, bedrock and ollama providers, which previously each
+    defined their own copy of this wrapper. Closes ``stream`` on normal
+    completion, upstream error, and consumer abandon.
+    """
+    try:
+        async for chunk in stream:
+            reasoning = None
+            for choice in chunk.choices or []:
+                reasoning = getattr(choice.delta, "reasoning", None) or getattr(choice.delta, "reasoning_content", None)
+            yield OpenAIChatCompletionChunkWithReasoning(
+                chunk=chunk,
+                reasoning_content=reasoning,
+            )
     finally:
         await close_async_stream(stream)
