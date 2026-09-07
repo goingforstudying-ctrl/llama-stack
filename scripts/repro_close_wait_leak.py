@@ -41,7 +41,7 @@ STREAM_CHUNKS = 4
 class StreamingHandler(BaseHTTPRequestHandler):
     server_version = "repro-server/1.0"
 
-    def do_POST(self):
+    def do_POST(self):  # noqa: N802
         # Drain the request body so the connection closes with FIN instead of
         # RST when the handler returns.
         length = int(self.headers.get("Content-Length") or 0)
@@ -146,9 +146,7 @@ def main() -> int:
 
     server = start_server(args.port)
     try:
-        close_wait, established = asyncio.run(
-            run_client(args.port, args.requests, args.leaky)
-        )
+        close_wait, established = asyncio.run(run_client(args.port, args.requests, args.leaky))
         print(f"abandoned streams: {args.requests}, wrapped: {not args.leaky}")
         print(f"sockets: CLOSE_WAIT={close_wait}, ESTABLISHED={established}")
         if args.leaky:
