@@ -19,6 +19,7 @@ from ogx.providers.inline.responses.builtin.responses.types import (
 from ogx.providers.remote.inference.ollama.config import OllamaImplConfig
 from ogx.providers.utils.inference.anthropic_translation import passthrough_anthropic_stream
 from ogx.providers.utils.inference.openai_mixin import OpenAIMixin
+from ogx.providers.utils.inference.stream_utils import close_async_stream
 from ogx_api import (
     HealthResponse,
     HealthStatus,
@@ -132,16 +133,19 @@ class OllamaInferenceAdapter(OpenAIMixin):
         result = await self.openai_chat_completion(params)
 
         async def _wrap_chunks() -> AsyncIterator[OpenAIChatCompletionChunkWithReasoning]:
-            async for chunk in result:
-                reasoning = None
-                for choice in chunk.choices or []:
-                    reasoning = getattr(choice.delta, "reasoning", None) or getattr(
-                        choice.delta, "reasoning_content", None
+            try:
+                async for chunk in result:
+                    reasoning = None
+                    for choice in chunk.choices or []:
+                        reasoning = getattr(choice.delta, "reasoning", None) or getattr(
+                            choice.delta, "reasoning_content", None
+                        )
+                    yield OpenAIChatCompletionChunkWithReasoning(
+                        chunk=chunk,
+                        reasoning_content=reasoning,
                     )
-                yield OpenAIChatCompletionChunkWithReasoning(
-                    chunk=chunk,
-                    reasoning_content=reasoning,
-                )
+            finally:
+                await close_async_stream(result)
 
         return _wrap_chunks()
 
