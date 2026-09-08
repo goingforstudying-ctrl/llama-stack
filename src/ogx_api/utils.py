@@ -62,14 +62,15 @@ async def sse_stream(
 ) -> AsyncGenerator[str, None]:
     """Yield SSE events from an async generator.
 
-    Each item is serialized with ``format_event``. Cancellation closes the
-    underlying generator. Any other exception is reported as the final event
-    via ``format_error_event``, which should also log the exception.
+    Each item is serialized with ``format_event``. Cancellation or
+    abandonment closes the underlying generator. Any other exception is
+    reported as the final event via ``format_error_event``, which should
+    also log the exception.
     """
     try:
         async for item in event_gen:
             yield format_event(item)
-    except asyncio.CancelledError:
+    except (asyncio.CancelledError, GeneratorExit):
         if hasattr(event_gen, "aclose"):
             await event_gen.aclose()
         raise
