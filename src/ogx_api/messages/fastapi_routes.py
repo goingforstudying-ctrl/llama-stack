@@ -19,7 +19,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from ogx_api.common.errors import ModelNotFoundError
 from ogx_api.router_utils import standard_responses
-from ogx_api.utils import create_sse_event_with_type, sse_stream
+from ogx_api.utils import create_sse_event_with_type, get_sse_error_message, sse_stream
 from ogx_api.version import OGX_API_V1
 
 from .api import Messages
@@ -53,7 +53,7 @@ def _format_anthropic_sse_error_event(e: Exception) -> str:
     """Log and format an SSE stream error as an Anthropic error event."""
     logger.exception("Error in Anthropic SSE generator")
     error_resp = AnthropicErrorResponse(
-        error=_AnthropicErrorDetail(type="api_error", message=str(e)),
+        error=_AnthropicErrorDetail(type="api_error", message=get_sse_error_message(e)),
     )
     return create_sse_event_with_type("error", error_resp)
 

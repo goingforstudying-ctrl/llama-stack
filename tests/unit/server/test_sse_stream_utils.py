@@ -12,12 +12,16 @@ from typing import cast
 
 import anyio
 import pytest
+from fastapi import HTTPException
 from fastapi.routing import APIRoute
 from starlette.responses import StreamingResponse
 from starlette.types import Message
 
 from ogx_api import Inference, OpenAIChatCompletionRequestWithExtraBody
-from ogx_api.inference.fastapi_routes import create_router
+from ogx_api.inference.fastapi_routes import _format_inference_sse_error_event, create_router
+from ogx_api.interactions.fastapi_routes import _format_google_sse_error_event
+from ogx_api.messages.fastapi_routes import _format_anthropic_sse_error_event
+from ogx_api.responses.fastapi_routes import sse_generator
 from ogx_api.utils import create_sse_event, sse_stream
 
 
@@ -132,3 +136,50 @@ async def test_inference_disconnect_finishes_upstream_cleanup() -> None:
     with anyio.fail_after(2):
         await response({"type": "http", "asgi": {"spec_version": "2.3"}}, receive, send)
     assert upstream_closed.is_set()
+
+
+@pytest.mark.parametrize("protocol", ["inference", "responses", "messages", "interactions"])
+@pytest.mark.parametrize("error_kind", ["unexpected", "http", "provider"])
+async def test_sse_server_errors_hide_internal_details(
+    protocol: str, error_kind: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    private_detail = "private-backend-detail"
+
+    class ProviderError(Exception):
+        """Represent an upstream service failure with an HTTP status."""
+
+        status_code = 503
+
+    errors = {
+        "unexpected": RuntimeError(private_detail),
+        "http": HTTPException(status_code=500, detail=private_detail),
+        "provider": ProviderError(private_detail),
+    }
+    events = await _collect_protocol_error(protocol, errors[error_kind])
+    assert private_detail not in events
+    assert "Internal server error: An unexpected error occurred." in events
+    assert private_detail in caplog.text
+
+
+@pytest.mark.parametrize("protocol", ["inference", "responses", "messages", "interactions"])
+@pytest.mark.parametrize("error", [ValueError("invalid model"), HTTPException(status_code=404, detail="invalid model")])
+async def test_sse_client_errors_keep_actionable_details(protocol: str, error: Exception) -> None:
+    events = await _collect_protocol_error(protocol, error)
+    assert "invalid model" in events
+
+
+async def _collect_protocol_error(protocol: str, error: Exception) -> str:
+    async def source() -> AsyncGenerator[str, None]:
+        raise error
+        yield "unreachable"
+
+    if protocol == "responses":
+        stream = sse_generator(source())
+    else:
+        formatter = {
+            "inference": _format_inference_sse_error_event,
+            "messages": _format_anthropic_sse_error_event,
+            "interactions": _format_google_sse_error_event,
+        }[protocol]
+        stream = sse_stream(source(), create_sse_event, formatter)
+    return "".join([event async for event in stream])

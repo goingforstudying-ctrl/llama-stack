@@ -13,6 +13,16 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from ogx_api.router_utils import try_translate_to_http_exception
+
+
+def get_sse_error_message(exc: Exception) -> str:
+    """Preserve client error details while hiding server exception messages."""
+    http_exc = try_translate_to_http_exception(exc)
+    if http_exc is not None and 400 <= http_exc.status_code < 500:
+        return str(http_exc.detail)
+    return "Internal server error: An unexpected error occurred."
+
 
 def _serialize_sse_data(data: Any) -> str:
     if isinstance(data, BaseModel):
