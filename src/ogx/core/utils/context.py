@@ -4,7 +4,7 @@
 # This source code is licensed under the terms described in the LICENSE file in
 # the root directory of this source tree.
 
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, AsyncIterator
 from contextvars import ContextVar, Token
 from typing import Any
 
@@ -12,10 +12,10 @@ _MISSING = object()
 
 
 def preserve_contexts_async_generator[T](
-    gen: AsyncGenerator[T, None], context_vars: list[ContextVar[Any]]
+    gen: AsyncIterator[T], context_vars: list[ContextVar[Any]]
 ) -> AsyncGenerator[T, None]:
     """
-    Wraps an async generator to preserve context variables across iterations.
+    Wraps an async iterator to preserve context variables across iterations.
     This is needed because we start a new asyncio event loop for each streaming request,
     and we need to preserve the context across the event loop boundary.
     """
@@ -79,7 +79,8 @@ def preserve_contexts_async_generator[T](
             except BaseException:
                 # Closing the wrapper must close its source while provider
                 # context is still active, before restoring the caller below.
-                await gen.aclose()
+                if hasattr(gen, "aclose"):
+                    await gen.aclose()
                 raise
             finally:
                 # Restore context vars after each yield to prevent leaks between requests

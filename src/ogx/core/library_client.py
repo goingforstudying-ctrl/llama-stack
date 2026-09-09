@@ -19,7 +19,7 @@ from collections.abc import AsyncGenerator, Generator, Mapping
 from enum import Enum
 from io import BytesIO
 from pathlib import Path
-from typing import Any, TypeVar, Union, cast, get_args, get_origin
+from typing import Any, TypeVar, Union, get_args, get_origin
 
 import httpx
 import yaml
@@ -330,9 +330,7 @@ async def _route_call_in_process(
                 mock_response = httpx.Response(
                     status_code=result.status_code,
                     stream=_SSEAsyncByteStream(
-                        preserve_contexts_async_generator(
-                            cast(AsyncGenerator[Any, None], result.body_iterator), [PROVIDER_DATA_VAR]
-                        )
+                        preserve_contexts_async_generator(aiter(result.body_iterator), [PROVIDER_DATA_VAR])
                     ),
                     headers={"Content-Type": content_type},
                     request=httpx.Request(method=method, url=url),

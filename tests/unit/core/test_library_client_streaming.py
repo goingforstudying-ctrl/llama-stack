@@ -7,6 +7,7 @@
 import json
 from collections.abc import AsyncGenerator
 
+import pytest
 from fastapi.responses import StreamingResponse
 
 from ogx.core.library_client import _route_call_in_process
@@ -53,7 +54,8 @@ async def test_async_streaming_preserves_provider_data_context() -> None:
     assert '"provider_data": {"provider": "test"}' in payload
 
 
-async def test_async_streaming_close_closes_body_in_provider_context() -> None:
+@pytest.mark.parametrize("as_iterable", [False, True])
+async def test_async_streaming_close_closes_body_in_provider_context(as_iterable: bool) -> None:
     closed_in_context = []
 
     async def endpoint() -> StreamingResponse:
@@ -64,7 +66,13 @@ async def test_async_streaming_close_closes_body_in_provider_context() -> None:
             finally:
                 closed_in_context.append(PROVIDER_DATA_VAR.get())
 
-        return StreamingResponse(gen(), media_type="text/event-stream")
+        class SSEIterable:
+            """Return a separate iterator, as permitted by StreamingResponse."""
+
+            def __aiter__(self) -> AsyncGenerator[str, None]:
+                return gen()
+
+        return StreamingResponse(SSEIterable() if as_iterable else gen(), media_type="text/event-stream")
 
     rest_response = await _route_call_in_process(
         method="POST",

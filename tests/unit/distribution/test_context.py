@@ -8,6 +8,7 @@ import asyncio
 from collections.abc import AsyncGenerator
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import ContextVar
+from typing import Self
 
 import pytest
 
@@ -167,4 +168,26 @@ async def test_preserve_contexts_restores_caller_on_cancellation() -> None:
     with pytest.raises(TimeoutError):
         async with asyncio.timeout(0):
             await anext(stream)
+    assert context_var.get() == "caller"
+
+
+async def test_preserve_contexts_handles_iterator_without_aclose() -> None:
+    """StreamingResponse also accepts iterators without an aclose method."""
+    context_var = ContextVar("iterator_context", default="caller")
+
+    class Iterator:
+        """Model an SSE passthrough iterator with no explicit close API."""
+
+        def __aiter__(self) -> Self:
+            return self
+
+        async def __anext__(self) -> str:
+            return context_var.get()
+
+    token = context_var.set("provider")
+    stream = preserve_contexts_async_generator(Iterator(), [context_var])
+    context_var.reset(token)
+
+    assert await anext(stream) == "provider"
+    await stream.aclose()
     assert context_var.get() == "caller"
