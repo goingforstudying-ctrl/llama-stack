@@ -5,6 +5,7 @@
 # the root directory of this source tree.
 
 import asyncio
+from collections.abc import AsyncGenerator
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import ContextVar
 
@@ -150,3 +151,20 @@ async def test_preserve_contexts_across_event_loops():
 
     # Third yield should have both modified values
     assert results[2] == (3, "req-modified", "user-modified")
+
+
+async def test_preserve_contexts_restores_caller_on_cancellation() -> None:
+    context_var = ContextVar("cancelled_stream", default="caller")
+
+    async def source() -> AsyncGenerator[str, None]:
+        await asyncio.sleep(10)
+        yield context_var.get()
+
+    token = context_var.set("provider")
+    stream = preserve_contexts_async_generator(source(), [context_var])
+    context_var.reset(token)
+
+    with pytest.raises(TimeoutError):
+        async with asyncio.timeout(0):
+            await anext(stream)
+    assert context_var.get() == "caller"

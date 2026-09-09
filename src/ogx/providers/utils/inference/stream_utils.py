@@ -41,7 +41,7 @@ async def wrap_async_stream[T](stream: AsyncIterator[T]) -> AsyncIterator[T]:
         async for item in stream:
             yield item
     except Exception as e:
-        log.error(f"Error in wrapped async stream: {e}")
+        log.error("Failed to iterate wrapped async stream", error=str(e))
         raise
     finally:
         await close_async_stream(stream)

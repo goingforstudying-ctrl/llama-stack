@@ -64,8 +64,8 @@ def preserve_contexts_async_generator[T](
                 for context_var in context_vars:
                     _restore_context_var(context_var)
                 break
-            except Exception:
-                # Restore all context vars on exception
+            except BaseException:
+                # Cancellation must also restore the caller's context.
                 for context_var in context_vars:
                     _restore_context_var(context_var)
                 raise
@@ -76,6 +76,11 @@ def preserve_contexts_async_generator[T](
                 # This allows context changes to persist across generator iterations
                 for context_var in context_vars:
                     initial_context_values[context_var.name] = context_var.get()
+            except BaseException:
+                # Closing the wrapper must close its source while provider
+                # context is still active, before restoring the caller below.
+                await gen.aclose()
+                raise
             finally:
                 # Restore context vars after each yield to prevent leaks between requests
                 for context_var in context_vars:

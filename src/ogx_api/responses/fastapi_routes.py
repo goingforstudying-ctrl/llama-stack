@@ -35,7 +35,7 @@ from ogx_api.router_utils import (
     standard_responses,
     try_translate_to_http_exception,
 )
-from ogx_api.utils import _preserve_context_for_sse, create_sse_event, sse_stream
+from ogx_api.utils import create_sse_event, sse_stream
 from ogx_api.version import OGX_API_V1
 
 from .api import Responses

@@ -10,20 +10,23 @@ CLOSE_WAIT leak repro (issue #6437).
 
 Starts a mock OpenAI server and an ogx server proxying to it.
 The client opens one stream, reads the first chunk, then disconnects.
-Servers are left running — inspect with: ss -tanp | grep -E "CLOSE|ESTAB"
+Use --no-exit to leave the servers running for inspection with ss -tanp.
 
 Usage:
-    uv run repro_close_wait.py
+    uv run scripts/repro_close_wait.py
 """
 
 import argparse
 import asyncio
 import json
 import os
+import shutil
+import subprocess
 import sys
 import tempfile
 import threading
 import time
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -41,7 +44,7 @@ STREAM_CHUNKS = 3
 class MockHandler(BaseHTTPRequestHandler):
     server_version = "repro/1.0"
 
-    def do_GET(self):
+    def do_GET(self) -> None:  # noqa: N802
         if self.path == "/v1/models":
             body = json.dumps({"object": "list", "data": [{"id": MODEL_ID, "object": "model"}]}).encode()
             self.send_response(200)
@@ -52,7 +55,7 @@ class MockHandler(BaseHTTPRequestHandler):
         else:
             self.send_error(404)
 
-    def do_POST(self):
+    def do_POST(self) -> None:  # noqa: N802
         length = int(self.headers.get("Content-Length") or 0)
         body = json.loads(self.rfile.read(length) or b"{}")
         if not body.get("stream"):
@@ -77,12 +80,12 @@ class MockHandler(BaseHTTPRequestHandler):
                 return
             time.sleep(CHUNK_DELAY)
 
-    def log_message(self, fmt, *args):
+    def log_message(self, fmt: str, *args: object) -> None:
         pass
 
 
 def repo_root() -> Path:
-    return Path(__file__).resolve().parent
+    return Path(__file__).resolve().parent.parent
 
 
 def main() -> int:
@@ -126,8 +129,6 @@ server:
     env["OGX_CONFIG"] = str(config_path)
     env["OGX_DISABLE_VERSION_CHECK"] = "1"
 
-    import subprocess
-
     ogx = subprocess.Popen(
         [
             sys.executable,
@@ -147,69 +148,75 @@ server:
         stdout=subprocess.DEVNULL,
         stderr=subprocess.STDOUT,
     )
-    print(f"ogx server: http://127.0.0.1:{OGX_PORT} (pid={ogx.pid})")
+    try:
+        print(f"ogx server: http://127.0.0.1:{OGX_PORT} (pid={ogx.pid})")
 
-    # Wait for ogx
-    deadline = time.monotonic() + 60
-    while time.monotonic() < deadline:
-        try:
-            import urllib.request
-
-            urllib.request.urlopen(f"http://127.0.0.1:{OGX_PORT}/v1/models", timeout=3)
-            break
-        except Exception:
-            time.sleep(1)
-    else:
-        print("ogx did not start in 60s")
-        return 1
-    print("ogx ready")
-
-    # Client: open 3 streams, read 1 chunk each, close
-    client = AsyncOpenAI(base_url=f"http://127.0.0.1:{OGX_PORT}/v1", api_key="test", max_retries=0)
-
-    async def abandon():
-        for i in range(3):
-            stream = await client.chat.completions.create(
-                model=ROUTED_MODEL_ID,
-                messages=[{"role": "user", "content": "hi"}],
-                stream=True,
-            )
-            async for _chunk in stream:
-                print(f"request {i + 1}: got first chunk, disconnecting")
-                break
-            await stream.close()
-        await client.close()
-
-    asyncio.run(abandon())
-
-    print(f"\nwaiting 6s for mock to finish (t={STREAM_CHUNKS * CHUNK_DELAY:.0f}s)...")
-    time.sleep(6)
-
-    import subprocess
-
-    out = subprocess.run(["ss", "-tanp"], capture_output=True, text=True, timeout=10).stdout
-    lines = [l for l in out.splitlines() if f":{MOCK_PORT}" in l or l.startswith("State")]
-    print(f"\nconnections to mock (:{MOCK_PORT}):")
-    for line in lines:
-        print(f"  {line}")
-    close_wait = sum(1 for l in lines if "CLOSE-WAIT" in l)
-    if close_wait:
-        print(f"LEAK: {close_wait} socket(s) in CLOSE_WAIT")
-    else:
-        print("no CLOSE_WAIT: ogx closed upstream connections on abandon")
-
-    if args.no_exit:
-        print("\nservers left running (Ctrl-C to stop)")
-        print(f"  mock:  :{MOCK_PORT}")
-        print(f"  ogx:   :{OGX_PORT} (pid={ogx.pid})")
-        try:
-            while True:
+        # Wait for ogx
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            try:
+                with urllib.request.urlopen(f"http://127.0.0.1:{OGX_PORT}/v1/models", timeout=3):
+                    break
+            except Exception:
                 time.sleep(1)
-        except KeyboardInterrupt:
-            pass
-    ogx.terminate()
-    mock.shutdown()
-    return 1 if close_wait else 0
+        else:
+            print("ogx did not start in 60s")
+            return 1
+        print("ogx ready")
+
+        # Client: open 3 streams, read 1 chunk each, close
+        client = AsyncOpenAI(base_url=f"http://127.0.0.1:{OGX_PORT}/v1", api_key="test", max_retries=0)
+
+        async def abandon() -> None:
+            for i in range(3):
+                stream = await client.chat.completions.create(
+                    model=ROUTED_MODEL_ID,
+                    messages=[{"role": "user", "content": "hi"}],
+                    stream=True,
+                )
+                async for _chunk in stream:
+                    print(f"request {i + 1}: got first chunk, disconnecting")
+                    break
+                await stream.close()
+            await client.close()
+
+        asyncio.run(abandon())
+
+        wait_seconds = STREAM_CHUNKS * CHUNK_DELAY + 1
+        print(f"\nwaiting {wait_seconds:.0f}s for mock to finish...")
+        time.sleep(wait_seconds)
+
+        out = subprocess.run(["ss", "-tanp"], capture_output=True, text=True, timeout=10, check=True).stdout
+        lines = [line for line in out.splitlines() if f":{MOCK_PORT}" in line or line.startswith("State")]
+        print(f"\nconnections to mock (:{MOCK_PORT}):")
+        for line in lines:
+            print(f"  {line}")
+        close_wait = sum(1 for line in lines if "CLOSE-WAIT" in line)
+        if close_wait:
+            print(f"LEAK: {close_wait} socket(s) in CLOSE_WAIT")
+        else:
+            print("no CLOSE_WAIT: ogx closed upstream connections on abandon")
+
+        if args.no_exit:
+            print("\nservers left running (Ctrl-C to stop)")
+            print(f"  mock:  :{MOCK_PORT}")
+            print(f"  ogx:   :{OGX_PORT} (pid={ogx.pid})")
+            try:
+                while True:
+                    time.sleep(1)
+            except KeyboardInterrupt:
+                pass
+        return 1 if close_wait else 0
+    finally:
+        ogx.terminate()
+        try:
+            ogx.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            ogx.kill()
+            ogx.wait()
+        mock.shutdown()
+        mock.server_close()
+        shutil.rmtree(config_dir)
 
 
 if __name__ == "__main__":

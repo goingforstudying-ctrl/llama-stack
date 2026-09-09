@@ -207,7 +207,7 @@ async def wait_for_ogx_server(ogx_port: int) -> None:
 def count_sockets(port: int) -> tuple[int, int]:
     """Return (close_wait, established) socket counts for connections to port."""
     try:
-        out = subprocess.run(["ss", "-tanH"], capture_output=True, text=True, timeout=10).stdout
+        out = subprocess.run(["ss", "-tanH"], capture_output=True, text=True, timeout=10, check=True).stdout
     except FileNotFoundError:
         raise SystemExit("ss(8) not found: install iproute2 to monitor connections") from None
     close_wait = established = 0
@@ -259,6 +259,7 @@ async def run_ogx_client(ogx_port: int, mock_port: int, requests: int) -> int:
     await client.close()
     # The mock finishes each stream a moment after the last chunk; give ogx
     # time to close its side of every upstream connection.
+    await asyncio.sleep(STREAM_CHUNKS * CHUNK_DELAY_SECONDS + 1)
     remaining = poll_close_wait_zero(mock_port, CLOSE_WAIT_POLL_SECONDS)
     return remaining
 
